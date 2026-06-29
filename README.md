@@ -36,9 +36,11 @@ serving/server.py        ← 接收前端请求
 InputProcessor           ← operators/process_input/operator.py
      ↓
 UEAvatarOperator         ← operators/gen_ue_avatar/operator.py（纯 AI 生成）
-  ├── gen_tpose()        ← funcs/gen_tpose.py     (GenImageModel)
-  ├── gen_3d_avatar()    ← funcs/gen_3d_avatar.py (Gen3DModel)
-  └── gen_motion()       ← funcs/gen_motion.py
+  ├── gen_tpose()        ← funcs/gen_tpose.py        (GenImageModel)
+  ├── gen_3d_avatar()    ← funcs/gen_3d_avatar.py    (Gen3DModel / Trellis)
+  ├── rig_avatar()       ← funcs/rig_avatar.py       (PuppeteerModel: 骨骼+蒙皮)
+  ├── retarget_motion()  ← funcs/retarget_motion.py  (world-delta 动作重定向)
+  └── gen_motion()       ← funcs/gen_motion.py       (rig + 可选 retarget)
      ↓
 serving/ue_client.py     ← Python 调 UE5 RPC，推送结果到前端展示
 
@@ -71,6 +73,47 @@ result = op.run(ref, description="straw hat pirate", motion_desc="walk forward")
 import_avatar_to_ue(result["mesh_path"])
 import_motion_to_ue(result["motion_path"], avatar_name="Avatar")
 ```
+
+## 骨骼绑定 (rigging) 与动作重定向 (retarget)
+
+Puppeteer 作为 `gen_3d` 下的「监测骨骼 + 蒙皮」模型接入，并附带一个纯 bpy 的动作
+重定向引擎：
+
+```
+models/gen_3d/
+├── puppeteer.py                 # PuppeteerModel：rig() 骨骼+蒙皮，retarget() 动作重定向
+├── puppeteer_retarget/          # 已提交的 bpy 重定向引擎（world-conjugation-delta）
+│   ├── rig_io.py                # 解析 rig.txt、建骨架、蒙皮权重、导入 GLB
+│   ├── world_delta.py           # Mixamo -> Puppeteer 世界增量重定向（推荐方法）
+│   ├── bvh_to_mixamo.py         # MoMask BVH -> Mixamo FBX（BVH 工作流第一步）
+│   └── mappings/*.json          # 骨骼映射表
+└── Puppeteer_main/              # Puppeteer 源码（由 install_puppeteer.sh 克隆，不提交）
+```
+
+安装与运行：
+
+```bash
+bash scripts/installing/install_puppeteer.sh
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"   # bpy 需要 X11/OpenGL 库
+
+python test/test_rigging.py     # GLB -> Puppeteer rig（骨骼 + 蒙皮）+ bind-pose FBX
+python test/test_retarget.py    # rig + Mixamo FBX -> 动画 FBX（mesh+anim 与 anim-only）
+```
+
+代码调用：
+
+```python
+op = UEAvatarOperator({"puppeteer_root": "models/gen_3d/Puppeteer_main", "device": "cuda"})
+
+rig = op.rig_avatar("output/avatar.glb")                       # 1. 自动绑定骨骼
+op.retarget_motion("output/avatar.glb", rig["rig_txt"],        # 2. 重定向 Mixamo 动作
+                   "Slow Run.fbx", source="mixamo", fps=30)
+# MoMask BVH：source="bvh" + mixamo_ref=<同体型 Mixamo FBX>，fps=20
+```
+
+> 说明：重定向采用 world-space 旋转增量，对自动绑定骨骼的局部 roll 不敏感，可避免手臂
+> 漂移 / 膝盖反向等问题。`anim_only` FBX 适合在 UE 中以 "Existing Skeleton" 导入动作。
+> headless 下 bpy 在进程退出时可能 segfault（无害）；只要 FBX 已写出即视为成功。
 
 ## 扩展新功能
 

@@ -1,2 +1,11 @@
 cache_code/
 .DS_Store
+
+# Installed model sources (cloned by scripts/installing/*.sh, not committed)
+models/gen_3d/TRELLIS2_main/
+models/gen_3d/Puppeteer_main/
+
+# Run outputs
+output/
+__pycache__/
+*.pyc

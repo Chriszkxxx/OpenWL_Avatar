@@ -1,0 +1,35 @@
+{
+  "description": "MoMask BVH -> Mixamo skeleton (from assets/mapping.json Keemap bone map).",
+  "source_skeleton": "MoMask-BVH",
+  "target_skeleton": "Mixamo",
+  "root_bones": {
+    "source": "Hips",
+    "mixamo": "mixamorig:Hips"
+  },
+  "bone_map": {
+    "Hips": "mixamorig:Hips",
+    "Spine": "mixamorig:Spine",
+    "Spine1": "mixamorig:Spine1",
+    "Spine2": "mixamorig:Spine2",
+    "Neck": "mixamorig:Neck",
+    "Head": "mixamorig:Head",
+    "LeftShoulder": "mixamorig:LeftShoulder",
+    "LeftArm": "mixamorig:LeftArm",
+    "LeftForeArm": "mixamorig:LeftForeArm",
+    "LeftHand": "mixamorig:LeftHand",
+    "RightShoulder": "mixamorig:RightShoulder",
+    "RightArm": "mixamorig:RightArm",
+    "RightForeArm": "mixamorig:RightForeArm",
+    "RightHand": "mixamorig:RightHand",
+    "LeftUpLeg": "mixamorig:LeftUpLeg",
+    "LeftLeg": "mixamorig:LeftLeg",
+    "LeftFoot": "mixamorig:LeftFoot",
+    "RightUpLeg": "mixamorig:RightUpLeg",
+    "RightLeg": "mixamorig:RightLeg",
+    "RightFoot": "mixamorig:RightFoot"
+  },
+  "notes": [
+    "Derived from momask-codes-main/assets/mapping.json (Keemap BVH->Mixamo).",
+    "Toes (LeftToe/RightToe) omitted — same as MoMask Keemap mapping."
+  ]
+}

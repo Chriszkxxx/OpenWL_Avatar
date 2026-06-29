@@ -21,6 +21,8 @@ from models.tools.rmbg import RMBGModel
 from operators.gen_ue_avatar.funcs.gen_tpose import gen_tpose
 from operators.gen_ue_avatar.funcs.gen_3d_avatar import gen_3d_avatar
 from operators.gen_ue_avatar.funcs.gen_motion import detect_skeleton, gen_motion
+from operators.gen_ue_avatar.funcs.rig_avatar import rig_avatar
+from operators.gen_ue_avatar.funcs.retarget_motion import retarget_motion
 
 
 class UEAvatarOperator:
@@ -60,6 +62,21 @@ class UEAvatarOperator:
         # Keep a legacy alias for backwards compatibility.
         self.depth_model = self.mask_model
 
+        # Rigging / retarget model (Puppeteer). Optional + lazy: only loaded
+        # when a rigging config is provided, so T-pose / 3D-only runs don't pay
+        # for it.
+        self.rigging_model = None
+        if cfg.get("rigging_model") or cfg.get("puppeteer_root"):
+            from models.gen_3d.puppeteer import PuppeteerModel
+
+            self.rigging_model = PuppeteerModel(
+                model_path=cfg.get("puppeteer_root") or cfg.get("rigging_model"),
+                device=device,
+                gpu=cfg.get("gpu", 0),
+                python_bin=cfg.get("rigging_python"),
+                bpy_python=cfg.get("bpy_python"),
+            )
+
     # ------------------------------------------------------------------
     # Pipeline steps (thin wrappers that call funcs/)
     # ------------------------------------------------------------------
@@ -87,24 +104,91 @@ class UEAvatarOperator:
         """
         return gen_3d_avatar(tpose_image, self.gen_3d_model, **kwargs)
 
-    def gen_motion(self, mesh_path: str, motion_desc: str = ""):
-        """Step 3: Detect skeleton and generate motion."""
-        rigged = detect_skeleton(mesh_path, model=None)    # TODO: set skeleton model
-        return gen_motion(rigged, motion_desc, model=None) # TODO: set motion model
+    def rig_avatar(self, mesh_path: str, **kwargs):
+        """Step 3a: Auto-rig the avatar mesh (Puppeteer skeleton + skinning).
+
+        Returns a dict with the rig `.txt` (+ optional bind-pose FBX). Extra
+        kwargs (output_dir, name, export_fbx, post_filter) are forwarded to
+        `funcs.rig_avatar.rig_avatar`.
+        """
+        if self.rigging_model is None:
+            raise RuntimeError(
+                "No rigging model loaded. Pass cfg['puppeteer_root'] (or "
+                "cfg['rigging_model']) when constructing UEAvatarOperator."
+            )
+        return rig_avatar(mesh_path, self.rigging_model, **kwargs)
+
+    def retarget_motion(self, glb_path: str, rig_txt: str, motion_path: str, **kwargs):
+        """Step 3b: Retarget a motion clip (Mixamo FBX / MoMask BVH) onto the rig.
+
+        Extra kwargs (output_path, source, mapping, mixamo_ref, fps,
+        export_anim_only, ...) are forwarded to
+        `funcs.retarget_motion.retarget_motion`.
+        """
+        if self.rigging_model is None:
+            raise RuntimeError(
+                "No rigging model loaded. Pass cfg['puppeteer_root'] (or "
+                "cfg['rigging_model']) when constructing UEAvatarOperator."
+            )
+        return retarget_motion(glb_path, rig_txt, motion_path, self.rigging_model, **kwargs)
+
+    def gen_motion(self, mesh_path: str, motion_desc: str = "", motion_path: str = "", **kwargs):
+        """Step 3: Rig the avatar, then apply a motion clip if one is given.
+
+        Args:
+            mesh_path:   Path to the 3D avatar mesh (`.glb`).
+            motion_desc: Text description (reserved for generative motion; not
+                         wired yet — see funcs.gen_motion.gen_motion).
+            motion_path: Optional existing motion clip (Mixamo FBX / MoMask BVH)
+                         to retarget onto the rigged character.
+            **kwargs:    Forwarded to `retarget_motion` (source, mapping, fps...).
+
+        Returns:
+            The rig dict, augmented with retarget outputs if `motion_path` set.
+        """
+        rig = self.rig_avatar(mesh_path)
+        if motion_path:
+            retarget = self.retarget_motion(
+                mesh_path, rig["rig_txt"], motion_path, **kwargs
+            )
+            rig.update(retarget)
+        elif motion_desc:
+            gen_motion(rig["rig_txt"], motion_desc, model=None)
+        return rig
 
     # ------------------------------------------------------------------
     # Convenience: run full pipeline end-to-end (returns assets for serving)
     # ------------------------------------------------------------------
 
-    def run(self, ref_image, description: str = "", motion_desc: str = "") -> dict:
+    def run(
+        self,
+        ref_image,
+        description: str = "",
+        motion_desc: str = "",
+        motion_path: str = "",
+        **motion_kwargs,
+    ) -> dict:
         """
         Run the full AI generation pipeline from a reference image.
 
+        If a rigging model is loaded, also rig the mesh and (when `motion_path`
+        is given) retarget that motion clip onto it.
+
         Returns:
-            dict with keys: tpose_image, mesh_path, motion_path
+            dict with keys: tpose_image, mesh_path, rig (or None), motion (or None)
             (caller is responsible for pushing results to UE5 via serving/ue_client.py)
         """
-        tpose  = self.gen_tpose(ref_image, description)
-        mesh   = self.gen_3d_avatar(tpose)
-        motion = self.gen_motion(mesh, motion_desc) if motion_desc else None
-        return {"tpose_image": tpose, "mesh_path": mesh, "motion_path": motion}
+        tpose = self.gen_tpose(ref_image, description)
+        mesh = self.gen_3d_avatar(tpose)
+
+        rig = None
+        if self.rigging_model is not None:
+            rig = self.gen_motion(
+                mesh, motion_desc=motion_desc, motion_path=motion_path, **motion_kwargs
+            )
+        return {
+            "tpose_image": tpose,
+            "mesh_path": mesh,
+            "rig": rig,
+            "motion_path": (rig or {}).get("output") if rig else None,
+        }

@@ -1,0 +1,114 @@
+{
+  "description": "Mixamo (source) -> Puppeteer (target). Auto-generated from FBX topology.",
+  "source_skeleton": "Mixamo",
+  "target_skeleton": "Puppeteer",
+  "root_bones": {
+    "mixamo": "mixamorig:Hips",
+    "puppeteer": "joint23"
+  },
+  "bone_map": {
+    "mixamorig:Hips": "joint23",
+    "mixamorig:Spine": "joint24",
+    "mixamorig:Spine1": "joint25",
+    "mixamorig:Spine2": "joint26",
+    "mixamorig:Neck": "joint27",
+    "mixamorig:Head": "joint28",
+    "mixamorig:LeftShoulder": "joint29",
+    "mixamorig:LeftArm": "joint32",
+    "mixamorig:LeftForeArm": "joint35",
+    "mixamorig:LeftHand": "joint36",
+    "mixamorig:RightShoulder": "joint22",
+    "mixamorig:RightArm": "joint19",
+    "mixamorig:RightForeArm": "joint16",
+    "mixamorig:RightHand": "joint15",
+    "mixamorig:LeftUpLeg": "joint30",
+    "mixamorig:LeftLeg": "joint31",
+    "mixamorig:LeftFoot": "joint33",
+    "mixamorig:LeftToeBase": "joint34",
+    "mixamorig:RightUpLeg": "joint21",
+    "mixamorig:RightLeg": "joint20",
+    "mixamorig:RightFoot": "joint18",
+    "mixamorig:RightToeBase": "joint17"
+  },
+  "retarget_chains": {
+    "spine": {
+      "mixamo": [
+        "mixamorig:Hips",
+        "mixamorig:Spine",
+        "mixamorig:Spine1",
+        "mixamorig:Spine2",
+        "mixamorig:Neck",
+        "mixamorig:Head"
+      ],
+      "puppeteer": [
+        "joint23",
+        "joint24",
+        "joint25",
+        "joint26",
+        "joint27",
+        "joint28"
+      ]
+    },
+    "left_arm": {
+      "mixamo": [
+        "mixamorig:LeftShoulder",
+        "mixamorig:LeftArm",
+        "mixamorig:LeftForeArm",
+        "mixamorig:LeftHand"
+      ],
+      "puppeteer": [
+        "joint29",
+        "joint32",
+        "joint35",
+        "joint36"
+      ]
+    },
+    "right_arm": {
+      "mixamo": [
+        "mixamorig:RightShoulder",
+        "mixamorig:RightArm",
+        "mixamorig:RightForeArm",
+        "mixamorig:RightHand"
+      ],
+      "puppeteer": [
+        "joint22",
+        "joint19",
+        "joint16",
+        "joint15"
+      ]
+    },
+    "left_leg": {
+      "mixamo": [
+        "mixamorig:LeftUpLeg",
+        "mixamorig:LeftLeg",
+        "mixamorig:LeftFoot",
+        "mixamorig:LeftToeBase"
+      ],
+      "puppeteer": [
+        "joint30",
+        "joint31",
+        "joint33",
+        "joint34"
+      ]
+    },
+    "right_leg": {
+      "mixamo": [
+        "mixamorig:RightUpLeg",
+        "mixamorig:RightLeg",
+        "mixamorig:RightFoot",
+        "mixamorig:RightToeBase"
+      ],
+      "puppeteer": [
+        "joint21",
+        "joint20",
+        "joint18",
+        "joint17"
+      ]
+    }
+  },
+  "notes": [
+    "Mapping inferred by walking hierarchies + world-pose geometry; no joint indices hardcoded.",
+    "Left/right sides determined via world-X sign after Mixamo 180-deg Z facing-fix.",
+    "Chain length = min(mixamo, puppeteer) so bone_map and retarget_chains stay consistent."
+  ]
+}
