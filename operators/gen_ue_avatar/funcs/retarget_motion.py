@@ -7,10 +7,13 @@ is applied in world space, so it is independent of the auto-rig's local bone
 roll — this fixes the arm-drift / backward-knee artifacts of local-frame
 methods.
 
-Two source types are supported:
-  - "mixamo": a Mixamo FBX animation, retargeted directly.
-  - "bvh":    a MoMask BVH, retargeted via an intermediate Mixamo FBX (so the
-              root height / fps normalize correctly for UE import).
+Source types:
+  - "mixamo":         a Mixamo FBX animation, retargeted directly.
+  - "bvh":            a BVH (e.g. MoMask), retargeted *directly* — the
+                      world-delta math is independent of source bone roll, so
+                      no Mixamo intermediate is needed.
+  - "bvh_via_mixamo": legacy two-step (BVH -> Mixamo FBX -> Puppeteer), kept as
+                      a fallback when a Mixamo bind rig is available.
 
 Input:
     glb_path    : str            — textured target character GLB
@@ -42,6 +45,8 @@ def retarget_motion(
     momask_keemap_json: Optional[str] = None,
     action_name: str = "Take 001",
     fps: int = 30,
+    global_scale: float = 1.0,
+    root_scale: Optional[float] = None,
     export_anim_only: bool = True,
     extra_args: Optional[List[str]] = None,
 ) -> dict:
@@ -51,23 +56,24 @@ def retarget_motion(
     Args:
         glb_path:        Textured target character GLB.
         rig_txt:         Puppeteer rig `.txt` (skeleton + skin weights).
-        motion_path:     Source animation — Mixamo FBX or MoMask BVH.
+        motion_path:     Source animation — Mixamo FBX or BVH (e.g. MoMask).
         model:           Loaded `PuppeteerModel` instance.
         output_path:     Output animated FBX (mesh + anim). Defaults to
                          `output/motion/<motion>_on_<char>.fbx`.
-        source:          "mixamo" (direct) or "bvh" (two-step via Mixamo).
-        mapping:         Mixamo->Puppeteer bone-map JSON (bundled default).
-        mixamo_ref:      For `source="bvh"`: a Mixamo bind-rig FBX of the same
-                         character used as the intermediate skeleton.
-        bvh_mapping:     BVH->Mixamo bone-map JSON (bundled default).
-        momask_keemap_json: Optional MoMask assets/mapping.json corrections.
+        source:          "mixamo", "bvh" (direct, recommended), or
+                         "bvh_via_mixamo" (legacy two-step via Mixamo).
+        mapping:         Source->Puppeteer bone-map JSON (bundled default per source).
+        mixamo_ref:      Only for `source="bvh_via_mixamo"`: a Mixamo bind-rig FBX.
+        bvh_mapping:     BVH->Mixamo bone-map JSON (legacy two-step).
+        momask_keemap_json: Optional MoMask assets/mapping.json corrections (legacy).
         action_name:     UE-friendly take name.
         fps:             Output FPS (use 20 for MoMask BVH).
+        global_scale:    BVH import scale (reconcile BVH units with the rig).
+        root_scale:      Override root-translation scale (0 = in-place).
         export_anim_only: Also export an armature-only FBX for UE "Existing
                          Skeleton" import (recommended when the skeletal mesh
                          already exists in UE).
-        extra_args:      Extra CLI flags forwarded to the retarget engine
-                         (e.g. ["--root-scale", "0"]).
+        extra_args:      Extra CLI flags forwarded to the retarget engine.
 
     Returns:
         dict: {"output", "intermediate", optionally "anim_only"}.
@@ -91,6 +97,8 @@ def retarget_motion(
         momask_keemap_json=momask_keemap_json,
         action_name=action_name,
         fps=fps,
+        global_scale=global_scale,
+        root_scale=root_scale,
         anim_only=False,
         extra_args=extra_args,
     )
@@ -98,7 +106,7 @@ def retarget_motion(
 
     if export_anim_only:
         anim_only_path = os.path.splitext(output_path)[0] + "_anim_only.fbx"
-        # Reuse the intermediate Mixamo FBX from the bvh path to avoid recompute.
+        # Reuse the intermediate FBX from the legacy two-step path to avoid recompute.
         anim = model.retarget(
             glb_path=glb_path,
             rig_txt=rig_txt,
@@ -111,6 +119,8 @@ def retarget_motion(
             momask_keemap_json=momask_keemap_json,
             action_name=action_name,
             fps=fps,
+            global_scale=global_scale,
+            root_scale=root_scale,
             anim_only=True,
             extra_args=extra_args,
         )

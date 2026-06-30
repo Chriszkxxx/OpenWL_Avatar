@@ -1,0 +1,36 @@
+{
+  "description": "MoMask BVH (source) -> Puppeteer (target), direct retarget. Composed from momask_bvh_to_mixamo + luffi_puppeteer_ue_mixamo.",
+  "source_skeleton": "MoMask-BVH",
+  "target_skeleton": "Puppeteer",
+  "root_bones": {
+    "source": "Hips",
+    "puppeteer": "joint23"
+  },
+  "bone_map": {
+    "Hips": "joint23",
+    "Spine": "joint24",
+    "Spine1": "joint25",
+    "Spine2": "joint26",
+    "Neck": "joint27",
+    "Head": "joint28",
+    "LeftShoulder": "joint29",
+    "LeftArm": "joint32",
+    "LeftForeArm": "joint35",
+    "LeftHand": "joint36",
+    "RightShoulder": "joint22",
+    "RightArm": "joint19",
+    "RightForeArm": "joint16",
+    "RightHand": "joint15",
+    "LeftUpLeg": "joint30",
+    "LeftLeg": "joint31",
+    "LeftFoot": "joint33",
+    "RightUpLeg": "joint21",
+    "RightLeg": "joint20",
+    "RightFoot": "joint18"
+  },
+  "notes": [
+    "Direct BVH->Puppeteer: world-delta transfers world-space rotations, so it is independent of source bone roll/naming — no Mixamo intermediate needed.",
+    "Toes (LeftToe/RightToe) omitted — not in the MoMask Keemap bone set.",
+    "Root translation is applied as a delta from the BVH rest pose; tune --root-scale / --global-scale if the BVH units differ from the rig."
+  ]
+}

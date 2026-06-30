@@ -5,14 +5,15 @@ Pipeline:
     1. Reuse a Puppeteer rig `.txt` (from test_rigging.py) + the textured GLB.
     2. PuppeteerModel.retarget:
        - source="mixamo": Mixamo FBX -> animated FBX (mesh+anim and anim-only)
-       - source="bvh"   : MoMask BVH -> (Mixamo FBX) -> animated FBX
+       - source="bvh"   : BVH (e.g. MoMask) -> animated FBX, *directly* (no
+                          Mixamo intermediate; world-delta is roll-independent)
 
 Only needs a bpy-capable interpreter (no GPU). Set:
     export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
 
 Override any path via env var, e.g.
     GLB=... RIG=... MIXAMO_ANIM=... python test/test_retarget.py
-    SOURCE=bvh BVH=... MIXAMO_REF=... python test/test_retarget.py
+    SOURCE=bvh BVH=... python test/test_retarget.py
 """
 
 import os
@@ -36,9 +37,9 @@ OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "output/motion")
 
 # Mixamo path
 MIXAMO_ANIM = os.environ.get("MIXAMO_ANIM", f"{_EX}/Slow Run.fbx")
-# BVH path (MoMask)
+# BVH path (e.g. MoMask) — retargeted directly, no Mixamo reference needed.
 BVH = os.environ.get("BVH", "")
-MIXAMO_REF = os.environ.get("MIXAMO_REF", "")
+GLOBAL_SCALE = float(os.environ.get("GLOBAL_SCALE", "1.0"))
 FPS = int(os.environ.get("FPS", "30" if SOURCE == "mixamo" else "20"))
 
 if __name__ == "__main__":
@@ -51,10 +52,10 @@ if __name__ == "__main__":
     )
 
     if SOURCE == "bvh":
-        assert BVH and MIXAMO_REF, "source=bvh needs BVH and MIXAMO_REF env vars."
+        assert BVH, "source=bvh needs the BVH env var (path to a .bvh file)."
         motion = BVH
         out = os.path.join(OUTPUT_DIR, "momask_on_luffi_clear.fbx")
-        kwargs = dict(source="bvh", mixamo_ref=MIXAMO_REF)
+        kwargs = dict(source="bvh", global_scale=GLOBAL_SCALE)
     else:
         motion = MIXAMO_ANIM
         out = os.path.join(OUTPUT_DIR, "slow_run_on_luffi_clear.fbx")

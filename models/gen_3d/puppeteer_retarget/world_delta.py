@@ -9,14 +9,24 @@ delta to the destination rest pose:
 
 This is axis-frame independent: it does not depend on the destination bone's
 local roll, which avoids the arm-drift / backward-knee artifacts produced by
-local-frame delta methods.
+local-frame delta methods. Because only world-space rotations are transferred,
+the *source* can be a Mixamo FBX or a BVH (e.g. MoMask) interchangeably — the
+importer is chosen by file extension and the root bones come from the mapping
+JSON's `root_bones`.
 
 Run as a module so relative imports resolve::
 
+    # Mixamo FBX
     python -m models.gen_3d.puppeteer_retarget.world_delta \\
-        --glb char.glb --rig char.txt --mixamo-anim run.fbx \\
+        --glb char.glb --rig char.txt --source-anim run.fbx \\
         --mapping mappings/luffi_puppeteer_ue_mixamo_mapping.json \\
         --output out.fbx
+
+    # BVH (direct, no Mixamo intermediate)
+    python -m models.gen_3d.puppeteer_retarget.world_delta \\
+        --glb char.glb --rig char.txt --source-anim motion.bvh \\
+        --mapping mappings/momask_bvh_to_puppeteer_mapping.json \\
+        --output out.fbx --fps 20
 """
 
 from __future__ import annotations
@@ -39,7 +49,7 @@ from .rig_io import (
     parent_to_armature,
 )
 
-# Default root bones (overridable by callers / the BVH workflow).
+# Default root bones (overridable via the mapping JSON or CLI).
 ROOT_MIX = "mixamorig:Hips"
 ROOT_PUP = "joint23"
 
@@ -48,6 +58,24 @@ def load_bone_map(path: str) -> Dict[str, str]:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     return data["bone_map"]
+
+
+def load_root_bones(
+    path: str,
+    default_src: str = "mixamorig:Hips",
+    default_dst: str = "joint23",
+) -> Tuple[str, str]:
+    """Read source/target root bone names from a mapping JSON's `root_bones`.
+
+    Accepts either {"source": ..., "puppeteer": ...} (BVH map) or
+    {"mixamo": ..., "puppeteer": ...} (Mixamo map).
+    """
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    roots = data.get("root_bones", {})
+    src = roots.get("source") or roots.get("mixamo") or default_src
+    dst = roots.get("puppeteer") or roots.get("target") or default_dst
+    return src, dst
 
 
 def stabilize(q: Quaternion, prev: Quaternion | None) -> Quaternion:
@@ -72,19 +100,42 @@ def clamp_delta_deg(q: Quaternion, max_deg: float) -> Quaternion:
     return Quaternion((1, 0, 0, 0)).slerp(q, s).normalized()
 
 
-def import_mixamo_animation(path: str) -> Tuple[bpy.types.Object, bpy.types.Action]:
+def import_source_animation(
+    path: str,
+    global_scale: float = 1.0,
+) -> Tuple[bpy.types.Object, bpy.types.Action]:
+    """Import a source animation armature from FBX or BVH (dispatch by extension).
+
+    BVH (e.g. MoMask) can be retargeted directly: the world-delta math only
+    reads per-bone world rotations, so it is independent of the source bone
+    naming / roll. `global_scale` lets you reconcile BVH units with the rig.
+    """
+    ext = os.path.splitext(path)[1].lower()
     before = set(bpy.data.objects)
-    bpy.ops.import_scene.fbx(filepath=path)
+    if ext == ".bvh":
+        bpy.ops.import_anim.bvh(
+            filepath=path,
+            axis_forward="-Z",
+            axis_up="Y",
+            global_scale=global_scale,
+        )
+    else:
+        bpy.ops.import_scene.fbx(filepath=path)
     new_objs = [o for o in bpy.data.objects if o not in before]
     arm = next(o for o in new_objs if o.type == "ARMATURE")
     for o in new_objs:
         if o.type == "MESH":
             o.hide_viewport = True
             o.hide_render = True
-    arm.name = "MixamoSource"
+    arm.name = "AnimSource"
     if not arm.animation_data or not arm.animation_data.action:
         raise RuntimeError(f"No animation action found in {path}")
     return arm, arm.animation_data.action
+
+
+def import_mixamo_animation(path: str) -> Tuple[bpy.types.Object, bpy.types.Action]:
+    """Backwards-compatible alias for FBX/BVH source import."""
+    return import_source_animation(path)
 
 
 def build_puppeteer_rig(glb_path: str, rig_path: str) -> Tuple[bpy.types.Object, bpy.types.Object]:
@@ -326,8 +377,15 @@ def export_animated_fbx(
 
 
 def run(args: argparse.Namespace) -> None:
+    global ROOT_MIX, ROOT_PUP
+
     clear_bpy_data()
     mapping = load_bone_map(args.mapping)
+
+    # Resolve root bones: CLI override > mapping JSON > module defaults.
+    map_src, map_dst = load_root_bones(args.mapping, ROOT_MIX, ROOT_PUP)
+    ROOT_MIX = args.src_root or map_src
+    ROOT_PUP = args.dst_root or map_dst
 
     print("[1/5] Building Puppeteer mesh + armature + weights...")
     mesh_obj, dst_arm = build_puppeteer_rig(args.glb, args.rig)
@@ -337,8 +395,10 @@ def run(args: argparse.Namespace) -> None:
         f"groups={len(mesh_obj.vertex_groups)}, weighted={weighted}"
     )
 
-    print(f"[2/5] Importing Mixamo animation: {args.mixamo_anim}")
-    src_arm, src_action = import_mixamo_animation(args.mixamo_anim)
+    ext = os.path.splitext(args.source_anim)[1].lower()
+    print(f"[2/5] Importing source animation ({ext or 'fbx'}): {args.source_anim}")
+    print(f"  roots: src={ROOT_MIX} -> dst={ROOT_PUP}")
+    src_arm, src_action = import_source_animation(args.source_anim, global_scale=args.global_scale)
     fs = int(args.frame_start if args.frame_start >= 0 else src_action.frame_range[0])
     fe = int(args.frame_end if args.frame_end >= 0 else src_action.frame_range[1])
     print(f"  frames {fs}-{fe} ({fe - fs + 1} frames)")
@@ -351,7 +411,7 @@ def run(args: argparse.Namespace) -> None:
         print(f"  loaded {len(correction)} per-bone correction quats")
 
     print("[3/5] Baking (world-delta retargeting, axis-frame independent)...")
-    action_name = args.action_name or os.path.splitext(os.path.basename(args.mixamo_anim))[0]
+    action_name = args.action_name or os.path.splitext(os.path.basename(args.source_anim))[0]
     action = bake_action(
         src_arm,
         dst_arm,
@@ -383,7 +443,8 @@ def run(args: argparse.Namespace) -> None:
     )
 
     meta = {
-        "source_animation": args.mixamo_anim,
+        "source_animation": args.source_anim,
+        "source_type": ext.lstrip(".") or "fbx",
         "target_skeleton": args.glb,
         "rig": args.rig,
         "output": args.output,
@@ -392,6 +453,9 @@ def run(args: argparse.Namespace) -> None:
         "frame_end": fe,
         "fps": args.fps,
         "retarget_method": "world_conjugation_delta",
+        "src_root": ROOT_MIX,
+        "dst_root": ROOT_PUP,
+        "global_scale": args.global_scale,
         "bake_root_to_bone": args.bake_root_to_bone,
         "root_scale": args.root_scale,
         "max_delta_deg": args.max_delta_deg,
@@ -410,13 +474,21 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--glb", required=True, help="Target character GLB (textures preserved).")
     p.add_argument("--rig", required=True, help="Puppeteer rig txt (skeleton + skin weights).")
-    p.add_argument("--mixamo-anim", required=True, help="Mixamo animation FBX (source).")
-    p.add_argument("--mapping", required=True, help="Mixamo->Puppeteer bone_map JSON.")
+    p.add_argument("--source-anim", "--mixamo-anim", dest="source_anim", required=True,
+                   help="Source animation. FBX (Mixamo) or BVH (e.g. MoMask) — "
+                        "dispatched by file extension.")
+    p.add_argument("--mapping", required=True, help="Source->Puppeteer bone_map JSON.")
     p.add_argument("--output", required=True, help="Output animated FBX path.")
     p.add_argument("--action-name", default="")
     p.add_argument("--fps", type=int, default=30)
     p.add_argument("--frame-start", type=int, default=-1)
     p.add_argument("--frame-end", type=int, default=-1)
+    p.add_argument("--src-root", default="",
+                   help="Override source root bone (else read from mapping/root_bones).")
+    p.add_argument("--dst-root", default="",
+                   help="Override Puppeteer root bone (else read from mapping/root_bones).")
+    p.add_argument("--global-scale", type=float, default=1.0,
+                   help="BVH import scale (reconcile BVH units with the rig).")
     p.add_argument("--root-scale", type=float, default=1.0,
                    help="Scale for root translation (0 disables).")
     p.add_argument("--max-delta-deg", type=float, default=170.0,

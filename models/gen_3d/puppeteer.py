@@ -289,42 +289,52 @@ class PuppeteerModel:
         action_name: str = "Take 001",
         fps: int = 30,
         anim_only: bool = False,
+        global_scale: float = 1.0,
+        root_scale: Optional[float] = None,
         extra_args: Optional[List[str]] = None,
     ) -> Dict[str, str]:
         """
         Retarget a motion clip onto the rigged character.
 
+        The world-delta math transfers world-space rotations, so BVH motion
+        (e.g. MoMask) can be retargeted *directly* — no Mixamo FBX detour.
+
         Args:
             glb_path:     Textured target character GLB.
             rig_txt:      Puppeteer rig `.txt` (from `rig()`).
-            motion_path:  Source animation — a Mixamo FBX (`source="mixamo"`)
-                          or a MoMask BVH (`source="bvh"`).
+            motion_path:  Source animation — a Mixamo FBX or a BVH.
             output_fbx:   Output animated FBX path.
-            mapping:      Mixamo->Puppeteer bone-map JSON. Defaults to the
-                          bundled `luffi_puppeteer_ue_mixamo_mapping.json`.
-            source:       "mixamo" (direct) or "bvh" (two-step via Mixamo).
-            mixamo_ref:   For `source="bvh"`: a Mixamo bind-rig FBX of the same
-                          proportions used as the intermediate skeleton.
-            bvh_mapping:  BVH->Mixamo bone-map JSON (defaults to bundled).
-            momask_keemap_json: Optional MoMask assets/mapping.json corrections.
-            intermediate_fbx: Where to write the intermediate Mixamo FBX (bvh mode).
-            action_name: UE-friendly take name.
+            mapping:      Source->Puppeteer bone-map JSON. Defaults per `source`:
+                          mixamo -> luffi_puppeteer_ue_mixamo_mapping.json,
+                          bvh    -> momask_bvh_to_puppeteer_mapping.json.
+            source:       "mixamo", "bvh" (direct, recommended), or
+                          "bvh_via_mixamo" (legacy two-step through a Mixamo rig).
+            mixamo_ref:   Only for "bvh_via_mixamo": a Mixamo bind-rig FBX used
+                          as the intermediate skeleton.
+            bvh_mapping:  BVH->Mixamo bone-map JSON for the legacy two-step path.
+            momask_keemap_json: Optional MoMask assets/mapping.json corrections
+                          (legacy two-step path).
+            intermediate_fbx: Where to write the intermediate FBX (two-step path).
+            action_name:  UE-friendly take name.
             fps:          Output FPS (use 20 for MoMask).
             anim_only:    Export armature animation only (UE Existing Skeleton).
+            global_scale: BVH import scale (reconcile BVH units with the rig).
+            root_scale:   Override root-translation scale (0 = in-place).
             extra_args:   Extra CLI flags forwarded to the retarget module.
 
         Returns:
-            dict with keys {"output", "intermediate"} (intermediate is None for
-            the Mixamo path).
+            dict with keys {"output", "intermediate"} (intermediate is None
+            except for the legacy two-step path).
         """
-        mapping = mapping or os.path.join(MAPPINGS_DIR, "luffi_puppeteer_ue_mixamo_mapping.json")
         os.makedirs(os.path.dirname(os.path.abspath(output_fbx)) or ".", exist_ok=True)
 
-        mixamo_anim = motion_path
+        source_anim = motion_path
         intermediate = None
-        if source == "bvh":
+
+        if source == "bvh_via_mixamo":
+            # Legacy: BVH -> Mixamo FBX -> Puppeteer (kept for reference/fallback).
             if not mixamo_ref:
-                raise ValueError("source='bvh' requires `mixamo_ref` (Mixamo bind-rig FBX).")
+                raise ValueError("source='bvh_via_mixamo' requires `mixamo_ref`.")
             bvh_mapping = bvh_mapping or os.path.join(MAPPINGS_DIR, "momask_bvh_to_mixamo_mapping.json")
             intermediate = intermediate_fbx or (os.path.splitext(output_fbx)[0] + "_mixamo_intermediate.fbx")
             bvh_cmd = [
@@ -338,18 +348,27 @@ class PuppeteerModel:
             if momask_keemap_json:
                 bvh_cmd += ["--momask-keemap-json", momask_keemap_json]
             self._run_bpy(bvh_cmd, expect_output=intermediate)
-            mixamo_anim = intermediate
+            source_anim = intermediate
+            mapping = mapping or os.path.join(MAPPINGS_DIR, "luffi_puppeteer_ue_mixamo_mapping.json")
+        elif source == "bvh":
+            # Direct BVH -> Puppeteer (recommended).
+            mapping = mapping or os.path.join(MAPPINGS_DIR, "momask_bvh_to_puppeteer_mapping.json")
+        else:  # mixamo
+            mapping = mapping or os.path.join(MAPPINGS_DIR, "luffi_puppeteer_ue_mixamo_mapping.json")
 
         cmd = [
             "-m", f"{RETARGET_PKG}.world_delta",
             "--glb", glb_path,
             "--rig", rig_txt,
-            "--mixamo-anim", mixamo_anim,
+            "--source-anim", source_anim,
             "--mapping", mapping,
             "--output", output_fbx,
             "--action-name", action_name,
             "--fps", str(fps),
+            "--global-scale", str(global_scale),
         ]
+        if root_scale is not None:
+            cmd += ["--root-scale", str(root_scale)]
         if anim_only:
             cmd.append("--anim-only")
         if extra_args:

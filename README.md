@@ -84,9 +84,9 @@ models/gen_3d/
 ├── puppeteer.py                 # PuppeteerModel：rig() 骨骼+蒙皮，retarget() 动作重定向
 ├── puppeteer_retarget/          # 已提交的 bpy 重定向引擎（world-conjugation-delta）
 │   ├── rig_io.py                # 解析 rig.txt、建骨架、蒙皮权重、导入 GLB
-│   ├── world_delta.py           # Mixamo -> Puppeteer 世界增量重定向（推荐方法）
-│   ├── bvh_to_mixamo.py         # MoMask BVH -> Mixamo FBX（BVH 工作流第一步）
-│   └── mappings/*.json          # 骨骼映射表
+│   ├── world_delta.py           # 源动作 (FBX/BVH) -> Puppeteer 世界增量重定向（推荐）
+│   ├── bvh_to_mixamo.py         # BVH -> Mixamo FBX（旧两步工作流，保留作 fallback）
+│   └── mappings/*.json          # 骨骼映射表（含 BVH->Puppeteer 直接映射）
 └── Puppeteer_main/              # Puppeteer 源码（由 install_puppeteer.sh 克隆，不提交）
 ```
 
@@ -106,14 +106,19 @@ python test/test_retarget.py    # rig + Mixamo FBX -> 动画 FBX（mesh+anim 与
 op = UEAvatarOperator({"puppeteer_root": "models/gen_3d/Puppeteer_main", "device": "cuda"})
 
 rig = op.rig_avatar("output/avatar.glb")                       # 1. 自动绑定骨骼
-op.retarget_motion("output/avatar.glb", rig["rig_txt"],        # 2. 重定向 Mixamo 动作
+op.retarget_motion("output/avatar.glb", rig["rig_txt"],        # 2a. Mixamo FBX 动作
                    "Slow Run.fbx", source="mixamo", fps=30)
-# MoMask BVH：source="bvh" + mixamo_ref=<同体型 Mixamo FBX>，fps=20
+op.retarget_motion("output/avatar.glb", rig["rig_txt"],        # 2b. BVH 直接重定向
+                   "motion.bvh", source="bvh", fps=20)         #     (无需 Mixamo 中转)
 ```
 
-> 说明：重定向采用 world-space 旋转增量，对自动绑定骨骼的局部 roll 不敏感，可避免手臂
-> 漂移 / 膝盖反向等问题。`anim_only` FBX 适合在 UE 中以 "Existing Skeleton" 导入动作。
-> headless 下 bpy 在进程退出时可能 segfault（无害）；只要 FBX 已写出即视为成功。
+> 说明：重定向采用 world-space 旋转增量，对源/目标骨骼的局部 roll 不敏感，可避免手臂
+> 漂移 / 膝盖反向等问题。正因为只传递世界旋转，BVH（如 MoMask）可**直接**重定向，无需
+> 先转成 Mixamo FBX；源类型按文件后缀自动识别，根骨骼从 mapping 的 `root_bones` 读取。
+> 若 BVH 单位与骨架不一致，可用 `global_scale` / `root_scale` 调整根位移。
+> `anim_only` FBX 适合在 UE 中以 "Existing Skeleton" 导入动作。headless 下 bpy 在进程
+> 退出时可能 segfault（无害）；只要 FBX 已写出即视为成功。旧两步法仍可用
+> `source="bvh_via_mixamo"` + `mixamo_ref=<同体型 Mixamo FBX>` 触发。
 
 ## 扩展新功能
 
