@@ -47,6 +47,7 @@ DEFAULT_PUPPETEER_ROOT = os.path.join(_HERE, "Puppeteer_main")
 
 # Vendored bpy retarget engine (committed with this repo).
 RETARGET_PKG = "models.gen_3d.puppeteer_retarget"
+MAPPINGS_PKG = f"{RETARGET_PKG}.mappings"
 MAPPINGS_DIR = os.path.join(_HERE, "puppeteer_retarget", "mappings")
 
 DEFAULT_SKELETON_CKPT = "skeleton_ckpts/puppeteer_skeleton_w_diverse_pose.pth"
@@ -345,6 +346,61 @@ class PuppeteerModel:
 
         print(f"[puppeteer] retarget done: {output_fbx}")
         return {"output": output_fbx, "intermediate": None}
+
+    # ------------------------------------------------------------------
+    # Mapping generation (bpy): FBX pair -> source->Puppeteer bone-map JSON
+    # ------------------------------------------------------------------
+
+    def generate_mapping(
+        self,
+        puppeteer_fbx: str,
+        mixamo_fbx: str,
+        output_json: str,
+    ) -> str:
+        """
+        Auto-generate a Mixamo->Puppeteer bone-map JSON from a bind-pose FBX pair.
+
+        Infers the mapping purely from skeleton topology + world-pose geometry
+        (no hardcoded joint indices), via the vendored
+        `puppeteer_retarget/mappings/generate_mapping_auto.py`. The resulting
+        JSON is directly consumable by `retarget(..., mapping=output_json)`.
+
+        Args:
+            puppeteer_fbx: Bind-pose FBX of the Puppeteer-rigged character
+                           (e.g. the `*_rigged.fbx` from `export_rigged_fbx`).
+            mixamo_fbx:    Any Mixamo-rigged FBX of the same/similar character
+                           (T-pose or animated; first frame is the bind ref).
+            output_json:   Path to write the mapping JSON.
+
+        Returns:
+            The `output_json` path.
+        """
+        os.makedirs(os.path.dirname(os.path.abspath(output_json)) or ".", exist_ok=True)
+        self._run_bpy(
+            [
+                "-m", f"{MAPPINGS_PKG}.generate_mapping_auto",
+                "--puppeteer-fbx", puppeteer_fbx,
+                "--mixamo-fbx", mixamo_fbx,
+                "--output", output_json,
+            ],
+            expect_output=output_json,
+        )
+        print(f"[puppeteer] mapping written: {output_json}")
+        return output_json
+
+    def inspect_skeletons(self, fbx_paths: List[str], output_txt: str) -> str:
+        """Dump the hierarchy + world head/tail of FBX armatures to a text file.
+
+        Debug helper for designing mapping rules; wraps
+        `puppeteer_retarget/mappings/inspect_skeleton.py`.
+        """
+        os.makedirs(os.path.dirname(os.path.abspath(output_txt)) or ".", exist_ok=True)
+        self._run_bpy(
+            ["-m", f"{MAPPINGS_PKG}.inspect_skeleton", "--output", output_txt, *fbx_paths],
+            expect_output=output_txt,
+        )
+        print(f"[puppeteer] skeleton dump written: {output_txt}")
+        return output_txt
 
     # ------------------------------------------------------------------
     # High-level convenience: mesh -> rigged FBX

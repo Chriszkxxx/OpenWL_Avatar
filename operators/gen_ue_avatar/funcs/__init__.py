@@ -7,6 +7,6 @@ Each file provides one focused capability:
   - gen_scene.py        : generate 3D scene (via FlashWorld / HunyuanWorldPlay)
   - rig_avatar.py       : auto-rig the mesh (Puppeteer skeleton + skinning)
   - retarget_motion.py  : retarget a motion clip (Mixamo FBX / MoMask BVH) onto the rig
-  - gen_motion.py       : skeleton detection + (future) text-to-motion generation
+  - gen_motion.py       : skeleton detection + text-to-motion generation (MoMask) + retarget
   - import_ue.py        : import 3D assets into Unreal Engine 5 via Python bridge
 """

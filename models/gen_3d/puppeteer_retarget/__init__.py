@@ -12,9 +12,13 @@ Modules:
   - rig_io.py       : load Puppeteer rig `.txt`, build armature, skin weights,
                       import textured GLB, export FBX (from Puppeteer export.py).
   - world_delta.py  : world-conjugation-delta retarget (FBX/BVH -> Puppeteer).
-  - mappings/       : direct source->Puppeteer bone-map JSONs.
+  - mappings/       : source->Puppeteer bone-map JSONs *and* their bpy builders
+                      (generate_mapping_auto.py auto-generates a bone-map JSON
+                      from an FBX pair; inspect_skeleton.py dumps armature
+                      hierarchies).
 
 Run the scripts as modules so relative imports resolve, e.g.
 
     python -m models.gen_3d.puppeteer_retarget.world_delta --help
+    python -m models.gen_3d.puppeteer_retarget.mappings.generate_mapping_auto --help
 """

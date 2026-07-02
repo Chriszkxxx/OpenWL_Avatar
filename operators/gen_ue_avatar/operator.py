@@ -77,6 +77,19 @@ class UEAvatarOperator:
                 bpy_python=cfg.get("bpy_python"),
             )
 
+        # Text-to-motion model (MoMask). Optional + lazy: only loaded when a
+        # motion config is provided.
+        self.motion_model = None
+        if cfg.get("motion_model") or cfg.get("momask_root"):
+            from models.gen_3d.momask import MoMaskModel
+
+            self.motion_model = MoMaskModel(
+                model_path=cfg.get("momask_root") or cfg.get("motion_model"),
+                device=device,
+                gpu=cfg.get("gpu", 0),
+                python_bin=cfg.get("motion_python") or cfg.get("rigging_python"),
+            )
+
     # ------------------------------------------------------------------
     # Pipeline steps (thin wrappers that call funcs/)
     # ------------------------------------------------------------------
@@ -133,18 +146,23 @@ class UEAvatarOperator:
         return retarget_motion(glb_path, rig_txt, motion_path, self.rigging_model, **kwargs)
 
     def gen_motion(self, mesh_path: str, motion_desc: str = "", motion_path: str = "", **kwargs):
-        """Step 3: Rig the avatar, then apply a motion clip if one is given.
+        """Step 3: Rig the avatar, then give it motion.
+
+        Precedence:
+          1. `motion_path` set → retarget that existing clip (Mixamo FBX / BVH).
+          2. `motion_desc` set + a MoMask model loaded → generate a novel motion
+             from text and retarget it onto the rig.
 
         Args:
             mesh_path:   Path to the 3D avatar mesh (`.glb`).
-            motion_desc: Text description (reserved for generative motion; not
-                         wired yet — see funcs.gen_motion.gen_motion).
+            motion_desc: Text description for MoMask text-to-motion generation.
             motion_path: Optional existing motion clip (Mixamo FBX / MoMask BVH)
                          to retarget onto the rigged character.
-            **kwargs:    Forwarded to `retarget_motion` (source, mapping, fps...).
+            **kwargs:    Forwarded to `retarget_motion` (when `motion_path` set)
+                         or `gen_motion` (when generating from `motion_desc`).
 
         Returns:
-            The rig dict, augmented with retarget outputs if `motion_path` set.
+            The rig dict, augmented with motion / retarget outputs.
         """
         rig = self.rig_avatar(mesh_path)
         if motion_path:
@@ -153,7 +171,21 @@ class UEAvatarOperator:
             )
             rig.update(retarget)
         elif motion_desc:
-            gen_motion(rig["rig_txt"], motion_desc, model=None)
+            if self.motion_model is None:
+                raise RuntimeError(
+                    "No motion model loaded. Pass cfg['momask_root'] (or "
+                    "cfg['motion_model']) when constructing UEAvatarOperator to "
+                    "enable text-to-motion generation."
+                )
+            motion = gen_motion(
+                motion_desc,
+                self.motion_model,
+                glb_path=mesh_path,
+                rig_txt=rig["rig_txt"],
+                puppeteer_model=self.rigging_model,
+                **kwargs,
+            )
+            rig.update(motion)
         return rig
 
     # ------------------------------------------------------------------

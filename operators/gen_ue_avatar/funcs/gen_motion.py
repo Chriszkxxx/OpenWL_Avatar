@@ -4,19 +4,25 @@ gen_motion.py — Skeleton detection and motion generation for the avatar.
 `detect_skeleton` is implemented via Puppeteer auto-rigging (skeleton + skin
 weights); see `rig_avatar.py`. Applying an *existing* motion clip onto the
 rigged character (Mixamo FBX / MoMask BVH) is handled by `retarget_motion.py`.
-`gen_motion` (text -> novel motion via a generative motion model, e.g. MoMask)
-is left as a hook for the future generative-motion model.
+`gen_motion` generates a *novel* motion from text via MoMask (text-to-motion),
+producing a HumanML3D BVH clip, and — when a rigged avatar is provided —
+retargets it directly onto that avatar via the Puppeteer world-delta engine.
 
 Input:
-    mesh_path   : str           — path to the 3D avatar mesh
-    motion_desc : str           — text description of the desired motion / action
-    model       : ...           — loaded motion generation model (TBD)
+    motion_desc  : str           — text description of the desired motion / action
+    momask_model : MoMaskModel   — loaded text-to-motion model
+    (optional retarget) glb_path + rig_txt + puppeteer_model
 
 Output:
-    motion_path : str           — path to the exported motion file (.bvh / .fbx)
+    dict with the generated motion paths ({"bvh", ...}), augmented with the
+    retarget outputs ({"output", "anim_only", ...}) when a rig is supplied.
 """
 
+import os
 from typing import Optional
+
+
+DEFAULT_OUTPUT_DIR = "output/motion"
 
 
 def detect_skeleton(
@@ -49,23 +55,85 @@ def detect_skeleton(
     )
 
 
-def gen_motion(rigged_mesh_path: str, motion_desc: str, model) -> str:
+def gen_motion(
+    motion_desc: str,
+    momask_model,
+    output_dir: Optional[str] = None,
+    name: Optional[str] = None,
+    motion_length: int = 0,
+    use_ik: bool = True,
+    seed: int = 10107,
+    glb_path: Optional[str] = None,
+    rig_txt: Optional[str] = None,
+    puppeteer_model=None,
+    retarget_output: Optional[str] = None,
+    export_anim_only: bool = True,
+    retarget_kwargs: Optional[dict] = None,
+    **gen_kwargs,
+) -> dict:
     """
-    Generate *novel* avatar motion from a text description.
+    Generate a *novel* avatar motion from a text description via MoMask.
 
-    Reserved for a generative motion model (e.g. MoMask text-to-motion). To
-    apply an existing motion clip onto a rigged avatar, use
-    `retarget_motion.retarget_motion` instead.
+    Runs MoMask text-to-motion to produce a HumanML3D BVH clip. If a rigged
+    avatar is supplied (`glb_path` + `rig_txt` + `puppeteer_model`), the clip is
+    retargeted directly onto that avatar with the Puppeteer world-delta engine
+    (`source="bvh"`, 20 fps to match MoMask), yielding an animated FBX.
+
+    To apply an *existing* motion clip (Mixamo FBX / MoMask BVH) onto a rig
+    without generating a new one, use `retarget_motion.retarget_motion`.
 
     Args:
-        rigged_mesh_path: Path to the rigged 3D avatar mesh / rig file.
         motion_desc:      Text description of the desired motion.
-        model:            Loaded motion generation model.
+        momask_model:     Loaded `MoMaskModel` (text-to-motion).
+        output_dir:       Directory for motion artifacts. Defaults to
+                          `output/motion`.
+        name:             Base name for outputs (defaults to a prompt slug).
+        motion_length:    Number of poses (0 = MoMask estimates the length).
+        use_ik:           Prefer the foot-IK-corrected BVH when available.
+        seed:             RNG seed for reproducible generation.
+        glb_path:         Textured target GLB (enables retarget when set).
+        rig_txt:          Puppeteer rig `.txt` (enables retarget when set).
+        puppeteer_model:  Loaded `PuppeteerModel` (enables retarget when set).
+        retarget_output:  Output animated FBX path (default derived from names).
+        export_anim_only: Also export an armature-only FBX for UE "Existing
+                          Skeleton" import.
+        retarget_kwargs:  Extra kwargs forwarded to `retarget_motion`.
+        **gen_kwargs:     Extra kwargs forwarded to `MoMaskModel.generate`
+                          (repeat_times, cond_scale, time_steps, temperature).
 
     Returns:
-        Path to the exported motion file (.bvh / .fbx).
+        The MoMask result dict ({"bvh", "bvh_raw", "bvh_ik"?, "npy"?, "mp4"?,
+        "fps", ...}), augmented with retarget outputs ({"output", "anim_only"?})
+        when a rig is provided.
     """
-    raise NotImplementedError(
-        "Text-to-motion generation is not wired yet; use retarget_motion() to "
-        "apply an existing Mixamo FBX or MoMask BVH clip onto the rigged avatar."
+    output_dir = output_dir or DEFAULT_OUTPUT_DIR
+    os.makedirs(output_dir, exist_ok=True)
+
+    result = momask_model.generate(
+        motion_desc,
+        output_dir=output_dir,
+        name=name,
+        motion_length=motion_length,
+        use_ik=use_ik,
+        seed=seed,
+        **gen_kwargs,
     )
+    print(f"[gen_motion] MoMask BVH: {result['bvh']}")
+
+    if puppeteer_model is not None and glb_path and rig_txt:
+        from operators.gen_ue_avatar.funcs.retarget_motion import retarget_motion
+
+        retarget = retarget_motion(
+            glb_path=glb_path,
+            rig_txt=rig_txt,
+            motion_path=result["bvh"],
+            model=puppeteer_model,
+            output_path=retarget_output,
+            source="bvh",
+            fps=result.get("fps", 20),
+            export_anim_only=export_anim_only,
+            **(retarget_kwargs or {}),
+        )
+        result.update(retarget)
+
+    return result
